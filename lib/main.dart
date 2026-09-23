@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'ai_service.dart';
 import 'db_helper.dart';
 
@@ -154,7 +155,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // FIXED: Silently updates the side drawer without resetting your active chat bubble!
   Future<void> _refreshDrawer() async {
     final sessions = await DatabaseHelper.instance.getSessions();
     setState(() {
@@ -163,7 +163,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _createNewSession() async {
-    if (_isGenerating) return; // Prevent breaking active streams
+    if (_isGenerating) return; 
     final newId = DateTime.now().millisecondsSinceEpoch.toString();
     setState(() {
       _currentSessionId = newId;
@@ -225,12 +225,14 @@ class _ChatScreenState extends State<ChatScreen> {
     String finalOutput = '';
     String finalThinking = '';
 
-    // Starts the live stopwatch
     _stopwatchTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       setState(() {
         _elapsedSeconds++;
       });
     });
+
+    // Forces the iPhone screen to stay awake while generating
+    WakelockPlus.enable();
 
     try {
       await for (var chunk in _aiService.streamPrompt(prompt, _currentSessionId)) {
@@ -243,13 +245,16 @@ class _ChatScreenState extends State<ChatScreen> {
         _scrollToBottom();
       }
     } catch (e) {
-      finalOutput = "Connection Error: $e";
+      // Appends the error to the bottom instead of wiping the partial response
+      finalOutput += "\n\n**[Connection Interrupted: $e]**";
       setState(() {
         _messages[aiMessageIndex]['output'] = finalOutput;
       });
+    } finally {
+      // Allows the iPhone screen to sleep normally again
+      WakelockPlus.disable();
     }
 
-    // Safely kills the stopwatch when generation completes
     _stopwatchTimer?.cancel();
     await DatabaseHelper.instance.saveMessage(_currentSessionId, 'ai', finalOutput, finalThinking);
 
@@ -463,7 +468,6 @@ class _ChatScreenState extends State<ChatScreen> {
                                         ),
                                         const SizedBox(height: 12),
                                       ],
-                                      // The newly added stopwatch timer visually embedded in the UI
                                       if (_isGenerating && index == _messages.length - 1)
                                         Padding(
                                           padding: EdgeInsets.only(top: (msg['output'] != null && msg['output'].isNotEmpty) ? 12.0 : 0.0),
