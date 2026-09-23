@@ -8,16 +8,13 @@ class AIService {
     final prefs = await SharedPreferences.getInstance();
     final host = prefs.getString('server_ip') ?? '100.78.140.104';
     
-    // CRITICAL FIX 1: Switch to the native Chat API to handle memory properly
     final serverUrl = 'http://$host:11434/api/chat';
 
-    // Fetch memory
     final rawHistory = await DatabaseHelper.instance.fetchMessages();
     final recentHistory = rawHistory.length > 6 
         ? rawHistory.sublist(rawHistory.length - 6) 
         : rawHistory;
 
-    // Format memory exactly how the native Chat API expects it
     List<Map<String, dynamic>> messages = [
       {
         "role": "system", 
@@ -34,15 +31,13 @@ class AIService {
       }
     }
 
-    // Because main.dart already saved the user's prompt to the database before this runs,
-    // the prompt is ALREADY the last item in the 'messages' array! 
-    // We only manually append it if it's missing to prevent the Double-Prompt Glitch.
     if (messages.isEmpty || messages.last['content'] != prompt) {
       messages.add({"role": "user", "content": prompt});
     }
 
     final request = http.Request('POST', Uri.parse(serverUrl));
     request.headers['Content-Type'] = 'application/json';
+    request.headers['Connection'] = 'keep-alive'; 
 
     request.body = jsonEncode({
       "model": "huihui_ai/deepseek-r1-abliterated:8b",
@@ -58,7 +53,6 @@ class AIService {
     try {
       final response = await client.send(request);
 
-      // CRITICAL FIX 2: Catch actual server errors so you never get a blank bubble again
       if (response.statusCode != 200) {
         final errorData = await response.stream.bytesToString();
         yield {'thinking': '', 'output': 'Server Connection Failed (HTTP ${response.statusCode}): $errorData'};
@@ -83,12 +77,10 @@ class AIService {
           if (data.containsKey('message')) {
             final msg = data['message'];
             
-            // Handle Ollama's newest API structure where thinking is separated natively
             if (msg.containsKey('thinking') && msg['thinking'].toString().isNotEmpty) {
                thinkingBlock += msg['thinking'];
                finalCode += msg['content'] ?? '';
             } else {
-               // Fallback: Manually parse <think> tags from the raw content
                fullResponse += msg['content'] ?? '';
                
                if (fullResponse.contains('<think>') && !fullResponse.contains('</think>')) {
@@ -113,7 +105,7 @@ class AIService {
         }
       }
     } finally {
-      client.close();
+      client.close(); 
     }
   }
 }
