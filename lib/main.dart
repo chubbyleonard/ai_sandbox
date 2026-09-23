@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,7 +19,6 @@ class CodeBlockBuilder extends MarkdownElementBuilder {
   Widget? visitElementAfter(md.Element element, TextStyle? preferredStyle) {
     final codeText = element.textContent;
     
-    // If it's just short inline code within a sentence, let Flutter use default text styling
     if (!codeText.contains('\n')) return null; 
     
     return Container(
@@ -31,7 +31,6 @@ class CodeBlockBuilder extends MarkdownElementBuilder {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Header Bar with Copy Button
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
@@ -65,7 +64,6 @@ class CodeBlockBuilder extends MarkdownElementBuilder {
               ],
             ),
           ),
-          // The Actual Code
           Padding(
             padding: const EdgeInsets.all(14.0),
             child: SelectableText(
@@ -125,12 +123,23 @@ class _ChatScreenState extends State<ChatScreen> {
   List<Map<String, dynamic>> _messages = [];
   List<Map<String, dynamic>> _sessions = [];
   String _currentSessionId = '';
+  
   bool _isGenerating = false;
+  Timer? _stopwatchTimer;
+  int _elapsedSeconds = 0;
 
   @override
   void initState() {
     super.initState();
     _loadSessions();
+  }
+
+  @override
+  void dispose() {
+    _stopwatchTimer?.cancel();
+    _textController.dispose();
+    _scrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadSessions() async {
@@ -145,7 +154,16 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  // FIXED: Silently updates the side drawer without resetting your active chat bubble!
+  Future<void> _refreshDrawer() async {
+    final sessions = await DatabaseHelper.instance.getSessions();
+    setState(() {
+      _sessions = sessions;
+    });
+  }
+
   Future<void> _createNewSession() async {
+    if (_isGenerating) return; // Prevent breaking active streams
     final newId = DateTime.now().millisecondsSinceEpoch.toString();
     setState(() {
       _currentSessionId = newId;
@@ -154,6 +172,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _loadSession(String sessionId) async {
+    if (_isGenerating) return; 
     final history = await DatabaseHelper.instance.fetchMessages(sessionId);
     setState(() {
       _currentSessionId = sessionId;
@@ -163,6 +182,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _deleteSession(String sessionId) async {
+    if (_isGenerating && sessionId == _currentSessionId) return; 
     await DatabaseHelper.instance.deleteSession(sessionId);
     await _loadSessions();
   }
@@ -186,7 +206,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_messages.isEmpty) {
       final title = prompt.length > 25 ? '${prompt.substring(0, 25)}...' : prompt;
       await DatabaseHelper.instance.createSession(_currentSessionId, title);
-      _loadSessions(); 
+      _refreshDrawer(); 
     }
 
     await DatabaseHelper.instance.saveMessage(_currentSessionId, 'user', prompt, '');
@@ -195,6 +215,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.add({'role': 'user', 'output': prompt, 'thinking': ''});
       _messages.add({'role': 'ai', 'output': '', 'thinking': ''});
       _isGenerating = true;
+      _elapsedSeconds = 0;
     });
 
     _textController.clear();
@@ -203,6 +224,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
     String finalOutput = '';
     String finalThinking = '';
+
+    // Starts the live stopwatch
+    _stopwatchTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      setState(() {
+        _elapsedSeconds++;
+      });
+    });
 
     try {
       await for (var chunk in _aiService.streamPrompt(prompt, _currentSessionId)) {
@@ -221,6 +249,8 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     }
 
+    // Safely kills the stopwatch when generation completes
+    _stopwatchTimer?.cancel();
     await DatabaseHelper.instance.saveMessage(_currentSessionId, 'ai', finalOutput, finalThinking);
 
     setState(() {
@@ -432,14 +462,19 @@ class _ChatScreenState extends State<ChatScreen> {
                                           ),
                                         ),
                                         const SizedBox(height: 12),
-                                      ] else if (_isGenerating && index == _messages.length - 1)
-                                        Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF3B82F6))),
-                                            const SizedBox(width: 12),
-                                            Text('Analyzing...', style: TextStyle(color: Colors.grey[500], fontSize: 14, fontWeight: FontWeight.w500)),
-                                          ],
+                                      ],
+                                      // The newly added stopwatch timer visually embedded in the UI
+                                      if (_isGenerating && index == _messages.length - 1)
+                                        Padding(
+                                          padding: EdgeInsets.only(top: (msg['output'] != null && msg['output'].isNotEmpty) ? 12.0 : 0.0),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF3B82F6))),
+                                              const SizedBox(width: 12),
+                                              Text('Processing... ${_elapsedSeconds}s', style: TextStyle(color: Colors.grey[500], fontSize: 14, fontWeight: FontWeight.w500)),
+                                            ],
+                                          ),
                                         ),
                                     ],
                                   ),
