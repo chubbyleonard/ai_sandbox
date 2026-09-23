@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io'; // Required for advanced socket control
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart'; // Required to bypass iOS timeouts
 import 'package:shared_preferences/shared_preferences.dart';
 import 'db_helper.dart';
 
@@ -10,7 +12,6 @@ class AIService {
     
     final serverUrl = 'http://$host:11434/api/chat';
 
-    // Fetch ONLY the history for the currently active session
     final rawHistory = await DatabaseHelper.instance.fetchMessages(sessionId);
     final recentHistory = rawHistory.length > 6 
         ? rawHistory.sublist(rawHistory.length - 6) 
@@ -45,11 +46,15 @@ class AIService {
       "messages": messages,
       "stream": true,
       "options": {
-        "num_ctx": 4096, // Reduced to instantly boost your laptop's CPU speed
+        "num_ctx": 4096,
       },
     });
 
-    final client = http.Client();
+    // CRITICAL UPGRADE: Force iOS to hold the connection open for up to 60 minutes
+    final innerClient = HttpClient();
+    innerClient.idleTimeout = const Duration(minutes: 60);
+    innerClient.connectionTimeout = const Duration(minutes: 60);
+    final client = IOClient(innerClient);
 
     try {
       final response = await client.send(request);
@@ -102,7 +107,7 @@ class AIService {
             };
           }
         } catch (_) {
-          // Safely handles stream chunks
+          // Ignores broken packets seamlessly
         }
       }
     } finally {
