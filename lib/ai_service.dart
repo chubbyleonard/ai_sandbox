@@ -4,13 +4,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'db_helper.dart';
 
 class AIService {
-  Stream<Map<String, String>> streamPrompt(String prompt) async* {
+  Stream<Map<String, String>> streamPrompt(String prompt, String sessionId) async* {
     final prefs = await SharedPreferences.getInstance();
     final host = prefs.getString('server_ip') ?? '100.78.140.104';
     
     final serverUrl = 'http://$host:11434/api/chat';
 
-    final rawHistory = await DatabaseHelper.instance.fetchMessages();
+    // Fetch ONLY the history for the currently active session
+    final rawHistory = await DatabaseHelper.instance.fetchMessages(sessionId);
     final recentHistory = rawHistory.length > 6 
         ? rawHistory.sublist(rawHistory.length - 6) 
         : rawHistory;
@@ -44,7 +45,7 @@ class AIService {
       "messages": messages,
       "stream": true,
       "options": {
-        "num_ctx": 8192,
+        "num_ctx": 4096, // Reduced to instantly boost your laptop's CPU speed
       },
     });
 
@@ -101,7 +102,7 @@ class AIService {
             };
           }
         } catch (_) {
-          // Ignore partial JSON packets seamlessly
+          // Safely handles stream chunks
         }
       }
     } finally {
